@@ -1,0 +1,375 @@
+<html>
+	<head>
+		<link rel="stylesheet" type="text/css" href="minireset.css"/>
+		<link rel="shortcut icon" type="image/png" href="images/soldier.png"/>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.0.4/socket.io.js"></script>
+    	<style type="text/css">
+			html, body{
+				height: 100%;
+				/*overflow: hidden;*/
+			}
+			body {
+				color: rgb(220, 220, 220);
+				background-color: #061319;
+			}
+		</style>
+		<title>Ultra Chess</title>
+		<script src="jquery-3.3.1.js" charset="utf-8"></script>
+		<script>
+
+			/*MVP
+			Only build game board
+			2 rooks and 1 queen 
+			Pieces can move only where they're allowed to and take each other
+			Pieces can be placed
+			Images on canvas
+			Click to move
+			Single board with wall and ground
+			*/
+
+			let Tweaks = {
+				tileSize: 50
+			}
+
+
+			class Piece{
+				constructor(type, team, x, y){
+					this.uid = 0;
+					this.type = type;
+					this.team = team;
+					this.x = x;
+					this.y = y;
+				}
+			}
+
+			class Knight extends Piece{
+				constructor(team, x, y){
+					super("Knight", team, x, y)
+				}
+				canMoveTo(x, y){
+					if(x == this.x || y == this.y){
+						return true;
+					}
+				}
+			}
+
+			class Emperor extends Piece{
+				constructor(team, x, y){
+					super("Emperor", team, x, y)
+				}
+				canMoveTo(x, y){
+					if(x == this.x || y == this.y){
+						return true;
+					}
+				}
+			}
+			
+			class Spawner extends Piece{
+				constructor(team, x, y){
+					super("Spawner", team, x, y)
+				}
+				canMoveTo(x, y){
+					return false;
+				}
+			}
+
+			//VIEW
+ 			let ImageURLs = {
+				floor: 'images/floor.png',
+				wall: 'images/wall.png',
+				gate: 'images/gate.png',
+				highlightRed: 'images/highlightRed.png',
+				highlightBlue: 'images/highlightBlue.png',
+				EmperorRed: 'images/EmperorRed.png',
+				EmperorBlue: 'images/EmperorBlue.png',
+				KnightRed: 'images/KnightRed.png',
+				KnightBlue: 'images/KnightBlue.png'
+			};
+ 			let Img = {};
+ 			class View{
+				constructor(){
+					this.canvas = new Canvas();
+ 				}
+				
+ 				imageLoad(imageURLs, target, callbackFn){
+					let imagesRequested = 0;
+					let imagesLoaded = 0;
+					for(let key in imageURLs){
+						let image = imageURLs[key];
+						target[key] = new Image();
+						target[key].onload = function(){
+							imagesLoaded ++
+						};
+						target[key].src = image;
+						imagesRequested ++;
+					}
+ 					let handle = setInterval( () => {
+						if( imagesLoaded >= imagesRequested ) {
+							console.assert(imagesLoaded == imagesRequested)
+							clearInterval(handle);
+							callbackFn();
+						}
+					},1)
+				}
+ 				myCanvas(canvasId, board){
+					var canvas = document.getElementById(canvasId);
+					var context = canvas.getContext('2d');
+					
+					context.drawTile = function(spec, imageObj){
+						let drawX = spec.x*Tweaks.tileSize;
+						let drawY = spec.y*Tweaks.tileSize;
+						if(spec.xAnchor && spec.yAnchor){
+							drawX -= Tweaks.tileSize*spec.xAnchor;
+							drawY -= Tweaks.tileSize*spec.yAnchor;
+						}
+						this.drawImage(imageObj, drawX, drawY, Tweaks.tileSize, Tweaks.tileSize);
+					}.bind(context)
+ 					context.clear = function(spec, imageObj){
+						this.drawImage(Img.background, 0, 0, 1200, 800);
+					}.bind(context)
+					return context
+				}
+			}
+
+			class Canvas{
+				constructor(){
+					this.context = null;
+					this.sim = null;
+				}
+				drawBoard(board){
+					let width = board.width
+					for(let i = 0; i < board.layout.length; i++){
+						let tile = board.layout[i]
+
+						let x;
+						let y;
+						[x, y] = board.tileNumToPos(i)
+						
+						let tileSpec = {x: x, y: y};
+
+						if(tile){
+							this.context.drawTile(tileSpec, Img.wall)
+						}else{
+							this.context.drawTile(tileSpec, Img.floor)
+						}
+					}
+				}
+				drawPiece(piece, pieceHighlighted){
+					let pieceSpec = {x: piece.x, y: piece.y};
+						
+					this.context.drawTile(pieceSpec, Img[piece.type+piece.team])
+
+					if(piece === pieceHighlighted){
+						this.context.drawTile(pieceSpec, Img["highlight"+piece.team])
+					}
+				}
+ 				render(pieceHighlighted){
+					this.drawBoard(this.sim.board);
+
+ 					for(let i = 0; i < this.sim.pieceList.length; i++){
+						this.drawPiece(this.sim.pieceList[i], pieceHighlighted)
+					}
+				}
+			}
+
+			class Sim {
+				constructor(board){
+					this.board = new Board();
+					this.pieceList = [];
+				}
+				getPieceFromPos(x, y){
+					x = this.board.snapToTile(x)
+					y = this.board.snapToTile(y)
+					for(let i = 0; i < this.pieceList.length; i++){
+						let piece = this.pieceList[i]
+						if(piece.x == x && piece.y == y){
+							return piece;
+						}
+					}
+					return null;
+				}
+				getIndexFromPiece(piece){
+					for(let i = 0; i < this.pieceList.length; i++){
+						let pieceFound = this.pieceList[i]
+						if(pieceFound == piece){
+							return i;
+						}
+					}
+					return null;
+				}
+				move(piece, x, y){
+					piece.x = x;
+					piece.y = y;
+					this.checkForCapture(piece)
+				}
+				checkForCapture(pieceMoving){
+					for(let i = 0; i < this.pieceList.length; i++){
+						let piece = this.pieceList[i]
+						if(piece.x == pieceMoving.x && piece.y == pieceMoving.y && piece !== pieceMoving){
+							this.capture(i)
+							return true;
+						}
+					}
+				}
+				capture(pieceIndex){
+					this.pieceList.splice(pieceIndex, 1)
+				}
+				checkWin(){
+
+				}
+				makePieceListFromData(pieceList){
+					this.pieceList = [];
+					for(let i = 0; i < pieceList.length; i++){
+						let piece = pieceList[i];
+						this.pieceAdd(piece.uid, piece.type, piece.team, piece.x, piece.y)
+					}
+				}
+				pieceAdd(uid, type, team, x, y){
+					let piece;
+					if(type == "Knight"){
+						piece = new Knight(team, x, y)
+					}
+					if(type == "Emperor"){
+						piece = new Emperor(team, x, y)
+					}
+					piece.uid = uid;
+
+					this.pieceList.push(piece)
+
+					return piece;
+				}
+			}
+
+			class Controls{
+				constructor(sim){
+					this.sim = sim;
+					this.mouseX = 0;
+					this.mouseY = 0;
+					this.pieceSelected = null;
+					let self = this;
+					$( document ).on("mousedown.controls", null,function( event ) {
+						self.click(event.pageX, event.pageY)
+					});
+				}
+				click(x, y){
+					let pieceClicked = this.sim.getPieceFromPos(x, y);
+					if(this.pieceSelected === null && pieceClicked.team == this.sim.team){
+						this.pieceSelected = pieceClicked;
+					}else{
+						let targetX = this.sim.board.snapToTile(x);
+						let targetY = this.sim.board.snapToTile(y);
+
+						if(this.pieceSelected.canMoveTo(targetX, targetY)){
+							let index = this.sim.getIndexFromPiece(this.pieceSelected)
+						
+							this.connection.pieceMove(index, targetX, targetY)
+						}
+
+						this.pieceSelected = null;
+						
+					}
+				}
+			}
+
+			class Board {
+				constructor(){
+					this.width = 8;
+					this.height = 8;
+					this.layout = [0,0,0,0,0,0,0,1, 0,0,0,0,0,0,0,0, 0,1,1,1,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,1,0,0, 0,0,0,0,0,1,0,0, 0,0,0,0,0,1,0,0, 1,0,0,0,0,0,0,0,]
+				}
+				tileNumToPos(num){
+					let x = Math.floor(num/this.width);
+					let y = (num%this.width);
+
+					return [x, y];
+				}
+				snapToTile(num){
+					num -= num%Tweaks.tileSize;
+					return num/Tweaks.tileSize;
+				}
+			}
+
+			class Game{
+				constructor(){
+					$("#waiting").show()
+
+	 				$("#canvas").show()
+					this.view = new View();
+	 				this.sim = new Sim();
+	 				this.context = this.view.myCanvas('myCanvas', this.sim.board);
+	 				this.view.canvas.context = this.context;
+	 				this.view.canvas.sim = this.sim;
+	 				this.controls = new Controls(this.sim);
+
+	 				this.connection = new Connection(this)
+
+	 				this.controls.connection = this.connection;
+
+					let handleView = setInterval(()=>(this.view.canvas.render(this.controls.pieceSelected)), (1000/60))
+				}
+			}
+
+			class Connection{
+				constructor(game){
+					this.game = game;
+					//make connection
+					this.socket = io.connect(document.location.href)
+
+					//Listen on new_message
+					this.socket.on('setPlayerNum', (data) => {
+						if(!this.game.sim.team){
+							console.log(data)
+							this.game.sim.team = (data.playerNum ? "Blue" : "Red");
+							document.getElementById("team").innerHTML = this.game.sim.team;
+						}
+					})
+
+					this.socket.on('state', (data) => {
+						console.log(data)
+						$("#waiting").hide()
+						this.game.sim.makePieceListFromData(data.pieceList);
+					})
+
+					this.socket.on('pieceAdd', (data) => {
+						console.log(data)
+						this.game.sim.pieceAdd(data.uid, data.type, data.team, data.x, data.y)
+					})
+					this.socket.on('pieceMove', (data) => {
+						console.log(data)
+						this.game.sim.move(this.game.sim.pieceList[data.index], data.x, data.y)
+					})
+				}
+				pieceAdd(uid, type, team, x, y){
+					this.socket.emit('pieceAdd', {uid: uid, type: type, team: team, x: x, y: y})
+				}
+				pieceMove(index, x, y){
+					this.socket.emit('pieceMove', {index: index, x: x, y: y})
+				}
+			}
+
+			function Main(){
+				let game = new Game();
+			}
+
+
+			//ORGANIZATION
+ 			$( document ).ready(function(){	
+				let view = new View();
+				view.imageLoad(ImageURLs, Img, Main);
+			});
+
+
+		</script>
+	</head>
+	<body>
+		<div id="canvas">
+			<canvas id="myCanvas" width="1000" height="790"></canvas>
+		</div>
+		<div id="team">
+
+		</div>
+		<div id="waiting">
+			Waiting for Players
+		</div>
+	</body>
+</html>
