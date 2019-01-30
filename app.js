@@ -45,40 +45,84 @@ class Emperor extends Piece{
 		super("Emperor", team, x, y)
 	}
 	canMoveTo(x, y){
-		if(x == this.x || y == this.y){
+		if(x == this.x || y == this.y || x-y == this.x-this.y || x+y == this.x+this.y){
 			return true;
 		}
 	}
 }
 
+class Spawner extends Piece{
+	constructor(team, x, y){
+		super("Spawner", team, x, y)
+	}
+	canMoveTo(x, y){
+		return false;
+	}
+}
+
+class Wall extends Piece{
+	constructor(team, x, y){
+		super("Wall", team, x, y)
+	}
+	canMoveToSpecific(x, y){
+		return false;
+	}
+}
+
+class Board{
+	constructor(){
+		this.width = 8;
+		this.height = 8;
+		this.layout = [0,0,0,0,0,0,0,1, 0,0,0,0,0,0,0,0, 0,1,1,1,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,1,0,0, 0,0,0,0,0,1,0,0, 0,0,0,0,0,1,0,0, 1,0,0,0,0,0,0,0,]
+	}
+}
 
 class Game{
 	constructor(){
-		this.state = {
-			pieceList: []
-		}
+		this.pieceList = [];
+		this.turn;
+
+		this.board = new Board();
 
 		this.slotsFilled = [false, false]
 	}
 	initializePieces(){
-		this.state.pieceList = [];
+		this.pieceList = [];
+		this.turn = 0;
 
+		for(let i = 0; i < this.board.layout.length; i++){
+			if(this.board.layout[i]){
+				let x = Math.floor(i/this.board.width);
+				let y = (i%this.board.width);
+				this.pieceAdd(Math.random(), "Wall", "Terrain", x, y)
+			}
+		}
+
+		this.pieceAdd(Math.random(), "Spawner", "Blue", 0, 0)
 		this.pieceAdd(Math.random(), "Knight", "Blue", 0, 1)
 		this.pieceAdd(Math.random(), "Emperor", "Blue", 1, 0)
-		this.pieceAdd(Math.random(), "Knight", "Red", 6, 7)
-		this.pieceAdd(Math.random(), "Emperor", "Red", 7, 6)
+		
+		this.pieceAdd(Math.random(), "Spawner", "Red", 7, 7)
+		this.pieceAdd(Math.random(), "Knight", "Red", 7, 6)
+		this.pieceAdd(Math.random(), "Emperor", "Red", 6, 7)
 	}
 	pieceAdd(uid, type, team, x, y){
 		let piece;
+		if(type == "Wall"){
+			piece = new Wall(team, x, y)
+		}
 		if(type == "Knight"){
 			piece = new Knight(team, x, y)
 		}
 		if(type == "Emperor"){
 			piece = new Emperor(team, x, y)
 		}
+		if(type == "Spawner"){
+			piece = new Spawner(team, x, y)
+		}
 		piece.uid = uid;
 
-		this.state.pieceList.push(piece)
+		this.pieceList.push(piece)
 
 		return piece;
 	}
@@ -100,7 +144,7 @@ io.on('connection', (socket) => {
 
 	if(game.slotsFilled[0] && game.slotsFilled[1]){
 		game.initializePieces()
-		io.sockets.emit('state', game.state);
+		io.sockets.emit('state', {pieceList: game.pieceList});
 	}
 
 	socket.on('pieceAdd', (data) => {
@@ -109,10 +153,15 @@ io.on('connection', (socket) => {
 		io.sockets.emit('pieceAdd', data);
 	})
 
+	socket.on('turn', (data) => {
+		game.turn = 1-socket.playerNum;
+		io.sockets.emit('turn');
+	})
+
 	socket.on('pieceMove', (data) => {
 		console.log("pieceMove "+data)
-		game.state.pieceList[data.index].x = data.x
-		game.state.pieceList[data.index].y = data.y
+		game.pieceList[data.index].x = data.x
+		game.pieceList[data.index].y = data.y
 		io.sockets.emit('pieceMove', data);
 	})
 

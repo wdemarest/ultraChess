@@ -28,58 +28,119 @@
 			*/
 
 			let Tweaks = {
-				tileSize: 50
+				tileSize: 75
 			}
 
 
 			class Piece{
-				constructor(type, team, x, y){
+				constructor(type, team, x, y, sim){
+					this.sim = sim;
 					this.uid = 0;
 					this.type = type;
 					this.team = team;
 					this.x = x;
 					this.y = y;
 				}
+				step(target, stepping){
+					return (target > stepping ? stepping+1 : (target < stepping ? stepping-1 : stepping))
+				}
+				canMoveTo(targetX, targetY){
+					if(targetX == this.x && targetY == this.y){
+						return false;
+					}
+
+
+					if(!this.canMoveToSpecific(targetX, targetY)){
+						return false
+					}
+
+					let steppingX = this.step(targetX, this.x)
+					let steppingY = this.step(targetY, this.y)
+
+					let reps = 0
+
+					let onPiece = null;
+
+					while(steppingX != targetX || steppingY != targetY){
+						if(reps > 100){
+							throw "OH GOD FAILURE!!!!";
+						}
+						reps++
+
+						onPiece = this.sim.getPieceFromPos(steppingX, steppingY)
+
+						if(onPiece){
+							console.log(onPiece)
+							return false;
+						}
+
+						steppingX = this.step(targetX, steppingX)
+						steppingY = this.step(targetY, steppingY)
+					}
+
+					onPiece = this.sim.getPieceFromPos(steppingX, steppingY)
+
+					let pieceTeam = (onPiece ? onPiece.team : null);
+
+					if(pieceTeam == "Terrain" || pieceTeam == this.team ){
+						console.log("pieceTeam: "+pieceTeam)
+						return false;
+					}
+
+					return true
+				}
 			}
 
 			class Knight extends Piece{
-				constructor(team, x, y){
-					super("Knight", team, x, y)
+				constructor(team, x, y, sim){
+					super("Knight", team, x, y, sim)
 				}
-				canMoveTo(x, y){
+				canMoveToSpecific(x, y){
 					if(x == this.x || y == this.y){
 						return true;
 					}
+					return false;
 				}
 			}
 
 			class Emperor extends Piece{
-				constructor(team, x, y){
-					super("Emperor", team, x, y)
+				constructor(team, x, y, sim){
+					super("Emperor", team, x, y, sim)
 				}
-				canMoveTo(x, y){
-					if(x == this.x || y == this.y){
+				canMoveToSpecific(x, y){
+					if(x == this.x || y == this.y || x-y == this.x-this.y || x+y == this.x+this.y){
 						return true;
 					}
+					return false;
 				}
 			}
 			
 			class Spawner extends Piece{
-				constructor(team, x, y){
-					super("Spawner", team, x, y)
+				constructor(team, x, y, sim){
+					super("Spawner", team, x, y, sim)
 				}
-				canMoveTo(x, y){
+				canMoveToSpecific(x, y){
 					return false;
+				}
+			}
+
+			class Wall extends Piece{
+				constructor(team, x, y, sim){
+					super("Wall", team, x, y, sim)
+				}
+				canMoveToSpecific(x, y){
+					throw("Somebody tried to move a wall.")
 				}
 			}
 
 			//VIEW
  			let ImageURLs = {
 				floor: 'images/floor.png',
-				wall: 'images/wall.png',
-				gate: 'images/gate.png',
+				Wall: 'images/wall.png',
 				highlightRed: 'images/highlightRed.png',
 				highlightBlue: 'images/highlightBlue.png',
+				SpawnerRed: 'images/gateRed.png',
+				SpawnerBlue: 'images/gateBlue.png',
 				EmperorRed: 'images/EmperorRed.png',
 				EmperorBlue: 'images/EmperorBlue.png',
 				KnightRed: 'images/KnightRed.png',
@@ -138,8 +199,7 @@
 				}
 				drawBoard(board){
 					let width = board.width
-					for(let i = 0; i < board.layout.length; i++){
-						let tile = board.layout[i]
+					for(let i = 0; i < board.width*board.height; i++){
 
 						let x;
 						let y;
@@ -147,17 +207,13 @@
 						
 						let tileSpec = {x: x, y: y};
 
-						if(tile){
-							this.context.drawTile(tileSpec, Img.wall)
-						}else{
-							this.context.drawTile(tileSpec, Img.floor)
-						}
+						this.context.drawTile(tileSpec, Img.floor)
 					}
 				}
 				drawPiece(piece, pieceHighlighted){
 					let pieceSpec = {x: piece.x, y: piece.y};
 						
-					this.context.drawTile(pieceSpec, Img[piece.type+piece.team])
+					this.context.drawTile(pieceSpec, Img[piece.type+(piece.team == "Terrain" ? "" : piece.team )])
 
 					if(piece === pieceHighlighted){
 						this.context.drawTile(pieceSpec, Img["highlight"+piece.team])
@@ -174,12 +230,10 @@
 
 			class Sim {
 				constructor(board){
-					this.board = new Board();
+					this.board = new Board(this);
 					this.pieceList = [];
 				}
 				getPieceFromPos(x, y){
-					x = this.board.snapToTile(x)
-					y = this.board.snapToTile(y)
 					for(let i = 0; i < this.pieceList.length; i++){
 						let piece = this.pieceList[i]
 						if(piece.x == x && piece.y == y){
@@ -213,9 +267,10 @@
 				}
 				capture(pieceIndex){
 					this.pieceList.splice(pieceIndex, 1)
+					this.checkWin()
 				}
 				checkWin(){
-
+					
 				}
 				makePieceListFromData(pieceList){
 					this.pieceList = [];
@@ -226,12 +281,19 @@
 				}
 				pieceAdd(uid, type, team, x, y){
 					let piece;
+					if(type == "Wall"){
+						piece = new Wall(team, x, y)
+					}
 					if(type == "Knight"){
-						piece = new Knight(team, x, y)
+						piece = new Knight(team, x, y, this)
 					}
 					if(type == "Emperor"){
-						piece = new Emperor(team, x, y)
+						piece = new Emperor(team, x, y, this)
 					}
+					if(type == "Spawner"){
+						piece = new Spawner(team, x, y, this)
+					}
+
 					piece.uid = uid;
 
 					this.pieceList.push(piece)
@@ -241,41 +303,54 @@
 			}
 
 			class Controls{
-				constructor(sim){
-					this.sim = sim;
+				constructor(game){
+					this.game = game;
+					this.sim = game.sim;
 					this.mouseX = 0;
 					this.mouseY = 0;
 					this.pieceSelected = null;
-					let self = this;
-					$( document ).on("mousedown.controls", null,function( event ) {
-						self.click(event.pageX, event.pageY)
+					$( "#myCanvas" ).on("mousemove", null, ( event ) => {
+						this.mouseX = event.clientX;
+						this.mouseY = event.clientY;
+					});
+					$( "#myCanvas" ).on("mousedown", null, ( event ) => {
+						this.click(this.mouseX, this.mouseY)
 					});
 				}
-				click(x, y){
-					let pieceClicked = this.sim.getPieceFromPos(x, y);
-					if(this.pieceSelected === null && pieceClicked.team == this.sim.team){
-						this.pieceSelected = pieceClicked;
+				click(mouseX, mouseY){
+					let x = this.sim.board.snapToTile(mouseX)
+					let y = this.sim.board.snapToTile(mouseY)
+					if(this.pieceSelected === null){
+						let pieceClicked = this.sim.getPieceFromPos(x, y);
+						if(!pieceClicked){
+							return
+						}
+						if(this.game.turn){
+							if(pieceClicked.team == this.sim.team){
+								this.pieceSelected = pieceClicked;
+							}else{
+								this.game.log.add("That's not your piece!")
+							}
+						}else{
+							this.game.log.add("It's not your turn!")
+						}
 					}else{
-						let targetX = this.sim.board.snapToTile(x);
-						let targetY = this.sim.board.snapToTile(y);
 
-						if(this.pieceSelected.canMoveTo(targetX, targetY)){
+						if(this.pieceSelected.canMoveTo(x, y)){
 							let index = this.sim.getIndexFromPiece(this.pieceSelected)
 						
-							this.connection.pieceMove(index, targetX, targetY)
+							this.connection.pieceMove(index, x, y)
 						}
 
 						this.pieceSelected = null;
-						
 					}
 				}
 			}
 
 			class Board {
-				constructor(){
+				constructor(sim){
 					this.width = 8;
 					this.height = 8;
-					this.layout = [0,0,0,0,0,0,0,1, 0,0,0,0,0,0,0,0, 0,1,1,1,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,1,0,0, 0,0,0,0,0,1,0,0, 0,0,0,0,0,1,0,0, 1,0,0,0,0,0,0,0,]
 				}
 				tileNumToPos(num){
 					let x = Math.floor(num/this.width);
@@ -292,20 +367,33 @@
 			class Game{
 				constructor(){
 					$("#waiting").show()
-
 	 				$("#canvas").show()
+
 					this.view = new View();
 	 				this.sim = new Sim();
 	 				this.context = this.view.myCanvas('myCanvas', this.sim.board);
 	 				this.view.canvas.context = this.context;
 	 				this.view.canvas.sim = this.sim;
-	 				this.controls = new Controls(this.sim);
+	 				this.controls = new Controls(this);
+	 				
+	 				this.turn = false;
 
-	 				this.connection = new Connection(this)
+	 				this.log = new Log();
+					
+					this.connection = new Connection(this)
 
 	 				this.controls.connection = this.connection;
 
 					let handleView = setInterval(()=>(this.view.canvas.render(this.controls.pieceSelected)), (1000/60))
+				}
+			}
+
+			class Log{
+				constructor(){
+
+				}
+				add(message){
+					$("#log").append("\n"+message)
 				}
 			}
 
@@ -319,8 +407,11 @@
 					this.socket.on('setPlayerNum', (data) => {
 						if(!this.game.sim.team){
 							console.log(data)
-							this.game.sim.team = (data.playerNum ? "Blue" : "Red");
-							document.getElementById("team").innerHTML = this.game.sim.team;
+							this.game.sim.team = (data.playerNum ? "Red" : "Blue");
+							
+							this.game.turn = (this.game.sim.team == "Red")
+
+							$("#team").html(this.game.sim.team)
 						}
 					})
 
@@ -338,12 +429,24 @@
 						console.log(data)
 						this.game.sim.move(this.game.sim.pieceList[data.index], data.x, data.y)
 					})
+					this.socket.on('turn', (data) => {
+						if(this.game.turn){
+							this.game.turn = false;
+						}else{
+							this.game.turn = true;
+						}
+					})
 				}
 				pieceAdd(uid, type, team, x, y){
 					this.socket.emit('pieceAdd', {uid: uid, type: type, team: team, x: x, y: y})
+					this.turn()
 				}
 				pieceMove(index, x, y){
 					this.socket.emit('pieceMove', {index: index, x: x, y: y})
+					this.turn()
+				}
+				turn(){
+					this.socket.emit('turn')
 				}
 			}
 
@@ -363,13 +466,16 @@
 	</head>
 	<body>
 		<div id="canvas">
-			<canvas id="myCanvas" width="1000" height="790"></canvas>
+			<canvas id="myCanvas" width="1000" height="750"></canvas>
 		</div>
 		<div id="team">
 
 		</div>
 		<div id="waiting">
 			Waiting for Players
+		</div>
+		<div id="log">
+			
 		</div>
 	</body>
 </html>
